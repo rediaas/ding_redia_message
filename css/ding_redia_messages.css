@@ -1,0 +1,59 @@
+/** 
+  Styling off Redia Service Messages
+*/
+
+.redia-service-message-rectangle {
+    width: 100%;
+    margin: 4px 0px 16px;
+    padding: 12px 16px;
+    border-radius: 5px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.redia-service-message-critical {
+    border: solid 1px #ad313c;
+    background-color: #f8efef;
+}
+
+.redia-service-message-warning {
+    border: solid 1px #FFC854;
+    background-color: #fff6e4;
+}
+
+.redia-service-message-info {
+    border: solid 1px #5996de;
+    background-color: #e4eef9;
+}
+
+.redia-service-message-content {
+	width: 100%;
+}
+
+.redia-service-message-text {
+    margin: 2px 0 8px 12px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.redia-service-message-text-copy {
+    margin: 6px 0 0 12px;
+    font-size: 16px;
+    color: #000;
+}
+
+.redia-service-message-icon-close {
+    width: 24px;
+    height: 24px;
+    margin-left: 16px;
+    object-fit: contain;
+}
+
+.redia-service-message-more-link {
+	margin: 2px 0 0 12px;
+}
+
+/* Admin page */
+.form-wrapper .redia-servive-message-wrapper {
+    width: 98%;
+}

@@ -1,0 +1,7 @@
+name = Ding Redia Messages
+description = Subscribe to messages from Redia and add to frontpage
+package = Ding!
+version = "7.x-0.26"
+core = 7.x
+stylesheets[all][] = css/ding_redia_messages.css
+dependencies[] = ding_frontpage

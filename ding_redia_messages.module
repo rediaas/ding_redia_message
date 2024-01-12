@@ -1,0 +1,426 @@
+<?php
+
+/**
+ * @file
+ * Receiving Service Messages from Redia.
+ */
+
+ define('DING_REDIA_MESSAGES_LEVEL_CRITICAL', 'critical');
+ define('DING_REDIA_MESSAGES_LEVEL_WARNING', 'warning');
+ define('DING_REDIA_MESSAGES_LEVEL_INFO', 'info');
+
+/**
+ * Implements hook_menu().
+ */
+function ding_redia_messages_menu() {
+  $items = [];
+
+  $items['admin/config/ding/ding_redia_messages'] = [
+    'title' => 'Redia Messages Settings',
+    'description' => 'Manage ding redia messages module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => ['ding_redia_messages_admin_form'],
+    'access arguments' => ['administer site configuration'],
+    'file' => 'includes/ding_redia_messages.admin.inc',
+    'type' => MENU_NORMAL_ITEM,
+  ];
+
+  $items['redia/serviceannouncements'] = [
+    'title' => 'Receives service messages',
+    'page callback' => 'ding_redia_messages_receive_messages_from_service',
+    'access arguments' => ['access content'],
+    'type' => MENU_CALLBACK,
+  ];
+
+  $items['redia/serviceannouncements/getmessage'] = [
+    'title' => 'Retrieves review off the object',
+    'page callback' => 'ding_redia_messages_get_message',
+    'access arguments' => ['access content'],
+    'type' => MENU_CALLBACK,
+  ];
+
+  return $items;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function ding_redia_messages_theme($existing, $type, $theme, $path) {
+  return [
+    'ding_redia_messages' => [
+      'variables' => [
+        'message' => null,
+      ],
+      'template' => 'ding-redia-messages',
+      'path' => $path . '/templates',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_page_alter().
+ */
+function ding_redia_messages_page_alter(&$page) {
+  // If this is the frontpage we add our js file.
+  if (drupal_is_front_page()) {
+    drupal_add_js(drupal_get_path('module', 'ding_redia_messages') . '/js/ding_redia_messages.js');
+    drupal_add_js(['dingRediaMessages' => ['messageUrl' => '/redia/serviceannouncements/getmessage'],], 'setting');
+  }
+}
+
+/**
+ * Ajax call function wich returns the message.
+ */
+function ding_redia_messages_get_message() {
+  $output = '';
+  // Ding Varnish will cache requests even for logged in users. Mark this
+  // page as not cacheable to bypass Varnish. We need to make sure the message
+  // is shown at the correct time.
+  drupal_page_is_cacheable(FALSE);
+
+  $message = ding_redia_messages_get_message_to_show();
+  if (isset($message )) {
+    $output = [
+      'hasMessage' => true,
+      'html' => $message 
+    ];
+  } 
+  else {
+    $output = [
+      'hasMessage' => false,
+      'html' => '',
+    ];
+  }
+  return drupal_json_output($output);
+}
+
+/**
+ * Get Messages to show.
+ */
+function ding_redia_messages_get_message_to_show() {
+  $messages_to_show = [];
+  $messages = variable_get('ding_redia_messages_messages');
+  if (isset($messages)) {
+    foreach ($messages as $message) {
+      if (ding_redia_messages_show_now($message)) {
+        $messages_to_show[] = $message;
+      }
+    }
+  }
+  
+  if (count($messages_to_show) == 0) {
+    return null;
+  } 
+  elseif (count($messages_to_show) == 1) {
+    return ding_redia_messages_render_message($messages_to_show[0]);
+  } 
+  else {
+    return ding_redia_messages_render_message(ding_redia_messages_prioritize_messages($messages_to_show));
+  }
+}
+
+/**
+ * Prioritize messages.
+ * 
+ * Returns the most prioritized message.
+ */
+function ding_redia_messages_prioritize_messages($messages) {
+  $message_to_show = null;
+  $message_to_show_priority = 0;
+
+  foreach ($messages as $message) {
+    if ($message_to_show == null) {
+      $message_to_show = $message;
+      $message_to_show_priority = ding_redia_messages_get_priority($message);
+    } else {
+      $priority = ding_redia_messages_get_priority($message);
+      if ($priority < $message_to_show_priority) {
+        $message_to_show = $message;
+        $message_to_show_priority = $priority;
+      }
+    }
+  }
+
+  return $message_to_show;
+}
+
+/**
+ * Get All Messages.
+ */
+function ding_redia_messages_get_all_messages() {
+  $output = '';
+  $messages = variable_get('ding_redia_messages_messages');
+
+  if (isset($messages)) {
+    $messages = ding_redia_messages_remove_done_messages($messages);
+    foreach ($messages as $message) {
+      $start = format_date($message->time_begin, 'custom', 'j-M-Y H:i',date_default_timezone());
+      $end = format_date($message->time_end, 'custom', 'j-M-Y H:i', date_default_timezone());
+      $output .= $start . ' - ' . $end;
+      $output .= ding_redia_messages_render_message($message);
+    }
+  }
+
+  return $output;
+}
+
+/**
+ * Render Message.
+ */
+function ding_redia_messages_render_message($message) {
+  switch ($message->level) {
+    case DING_REDIA_MESSAGES_LEVEL_CRITICAL:
+      $icon = 'icon-error-24.svg';
+      $title = t('Critical');
+      $message->level_class = 'redia-service-message-critical';
+      break;
+    case DING_REDIA_MESSAGES_LEVEL_WARNING:
+      $icon = 'icon-warning-24.svg';
+      $title = t('Warning');
+      $message->level_class = 'redia-service-message-warning';
+      break;
+    case DING_REDIA_MESSAGES_LEVEL_INFO:
+      $icon = 'icon-about-24.svg';
+      $title = t('Info');
+      $message->level_class = 'redia-service-message-info';
+      break;
+    default:
+      $icon = 'icon-about-24.svg';
+      $title = t('Info');
+      $message->level_class = 'redia-service-message-info';
+      break;
+  }
+  $message->icon = ding_redia_messages_get_icon($icon, $title);
+
+  if ($message->dismissible) {
+    $message->close_icon = ding_redia_messages_get_icon('icon-close-small-24.svg', t('Close'));;
+  }
+  if (!empty($message->link_title) && !empty($message->link_url)) {
+    $message->more_link = l($message->link_title, $message->link_url);
+  } else if (!empty($message->link_url)) {
+    $message->more_link = l(t('Read more'), $message->link_url);
+  }
+  return theme('ding_redia_messages', ['message' => $message]);
+}
+
+/**
+ * Get icon for the message level.
+ */
+function ding_redia_messages_get_icon($icon, $title) {
+  $path = drupal_get_path('module', 'ding_redia_messages') . '/images/' . $icon;
+  $image_vars = ['path' => $path, 'alt' => $title, 'title' => $title];
+  
+  return theme('image', $image_vars );;
+}
+
+/**
+ * Priority off a message.
+ * 
+ * Message level is most important. If same priority then automatic messages before manual.
+ */
+function ding_redia_messages_get_priority($message) { 
+  switch ($message->level) {
+    case DING_REDIA_MESSAGES_LEVEL_CRITICAL:
+      $priority = 1;
+      break;
+    case DING_REDIA_MESSAGES_LEVEL_WARNING:
+      $priority = 3;
+      break;
+    case DING_REDIA_MESSAGES_LEVEL_INFO:
+      $priority = 5;
+      break;
+    default:
+     $priority = 0;
+      break;
+  }
+  if ($message->category == 'manual') {
+    $priority++;
+  }
+  return $priority;
+}
+
+/**
+ * Sort Messages.
+ */
+function ding_redia_messages_sort_messages_compare($message_a, $message_b) {
+  if ($message_a->time_begin > $message_b->time_begin) {
+    return 1;
+  }
+  return -1;
+}
+
+/**
+ * Remove Messages which are beyond their end time.
+ */
+function ding_redia_messages_remove_done_messages($messages) {
+  $current_messages =[];
+  $time = time();
+  foreach ($messages as $message) {
+    if ($message->time_end > $time) {
+      $current_messages[] = $message;
+    }
+  }
+  return $current_messages;
+}
+
+/**
+ * Should message be displayed now.
+ */
+function ding_redia_messages_show_now($message) {
+  $time = time();
+  if ($message->time_begin <= $time && $message->time_end > $time) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Get messages from the Redia Message Service.
+ */
+function ding_redia_messages_receive_messages_from_service() {
+  try {
+    $received_json = file_get_contents("php://input",  TRUE);
+    $messages_data = json_decode($received_json);
+    watchdog('ding_redia_message', 'Message data' . $received_json , [], WATCHDOG_INFO);
+    if (!ding_redia_messages_validate_messages($messages_data)) {
+      return ding_redia_messages_api_response('failed', 'Didnt validate');
+    } 
+    $auth = ding_redia_messages_authenticate();
+    if (!$auth['is_authenticated']) {
+      return ding_redia_messages_api_response('authentication_failed', $auth['message']);
+    }
+    if (!ding_redia_messages_check_environment($messages_data)) {
+      return ding_redia_messages_api_response('failed', 'enovironment does not match');
+    }
+    
+    ding_redia_messages_save_messages($messages_data);
+    return ding_redia_messages_api_response('ok');
+  } 
+  catch (\Exception $e) {
+    watchdog_exception('ding_redia_message', $e);
+    return ding_redia_messages_api_response('failed', 'Threw exception');
+  }
+}
+
+/**
+ * Authenticate the request.
+ * 
+ * Authentication uses JWT as described here: https://cloud.google.com/pubsub/docs/push#validate_tokens
+ */
+function ding_redia_messages_authenticate(){
+  $response = [
+    'is_authenticated' => true,
+    'message' => ''
+  ];
+  $token = ding_redia_messages_get_bearer_token();
+
+  if (!(isset($token))) {
+    watchdog('ding_redia_message', 'Couldnt authenticate. Token missing', [], WATCHDOG_ERROR);
+    $response['is_authenticated'] = false;
+    $response['message'] = 'No token';
+    return $response;
+  }
+
+  $authenticated = ding_redia_messages_validate_token($token);
+  if (!$authenticated) {
+    watchdog('ding_redia_message', 'Couldnt authenticate. Invalid token', [], WATCHDOG_ERROR);
+    $response['is_authenticated'] = false;
+    $response['message'] = 'Invalid token';
+    return $response;
+  }
+  return $response;
+}
+
+/**
+ * Get access token from header
+ * 
+ * * Based on: https://stackoverflow.com/questions/40582161/how-to-properly-use-bearer-tokens
+ * 
+ * */
+function ding_redia_messages_get_bearer_token() {
+  $headers = ding_redia_messages_get_authorization_header();
+
+  // HEADER: Get the access token from the header
+  if (!empty($headers)) {
+    if (preg_match('/Bearer\s(\S+)/', $headers, $matches)) {
+      return $matches[1];
+    }
+  }
+  return null;
+}
+
+/** 
+ * Get header Authorization
+ * 
+ * */
+function ding_redia_messages_get_authorization_header(){
+  $headers = null;
+  if (isset($_SERVER['Authorization'])) {
+      $headers = trim($_SERVER["Authorization"]);
+  }
+  else if (isset($_SERVER['HTTP_AUTHORIZATION'])) { //Nginx or fast CGI
+      $headers = trim($_SERVER["HTTP_AUTHORIZATION"]);
+  } 
+  return $headers;
+}
+
+/**
+ * Send a return repsponse from the api.
+ */
+function ding_redia_messages_api_response($status, $message = '') {
+  $response = [
+    'status' => $status,
+    'message' => $message,
+  ];
+  drupal_json_output($response);
+  drupal_exit();
+}
+
+/**
+ * Validate the authorization token.
+ */
+function ding_redia_messages_validate_token($token) {
+  $google_validation = variable_get('ding_redia_messages_auth_service', 'https://oauth2.googleapis.com/tokeninfo?id_token=');
+  $url = $google_validation . $token;
+  $response = drupal_http_request($url);
+  if (isset($response) && isset($response->code) && $response->code == 200) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Save the received messages.
+ */
+function ding_redia_messages_save_messages($messages_data) {
+  $messages = json_decode(base64_decode($messages_data->message->data));
+  $messages = ding_redia_messages_remove_done_messages($messages);
+  usort($messages, 'ding_redia_messages_sort_messages_compare');
+  variable_set('ding_redia_messages_messages', $messages);
+}
+
+/**
+ * Checks the enviroment given in the request.
+ */
+function ding_redia_messages_check_environment($messages_data) {
+  if (isset($messages_data->message->attributes) && isset($messages_data->message->attributes->environment)) {
+    if ($messages_data->message->attributes->environment == variable_get('ding_redia_messages_environment', 'production'))
+      return true;
+  }
+  return false;
+}
+
+/**
+ * Validate messages from the Redia Message Service.
+ */
+function ding_redia_messages_validate_messages($messages_data) {
+  if (isset($messages_data) && isset($messages_data->subscription) && isset($messages_data->message)
+    && isset($messages_data->message->data) && isset($messages_data->message->attributes)) {
+
+    $data = base64_decode($messages_data->message->data);
+    if ($data != false) {
+        return true;
+    }
+  }
+  return false;
+}

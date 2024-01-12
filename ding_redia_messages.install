@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * @file
+ * Handles installation/un-installation of ding redia message module.
+ */
+
+/**
+  * Implements hook_uninstall().
+  *
+  */
+function ding_redia_messages_uninstall() {
+  // Unset variables.
+  variable_del('ding_redia_messages_messages');
+  variable_del('ding_redia_messages_auth_service');
+  variable_del('ding_redia_messages_environment');
+}
